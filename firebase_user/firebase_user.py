@@ -2,9 +2,6 @@ import requests
 import json
 from objdict_bf import objdict
 import time
-import threading
-from google.cloud import storage
-from google.oauth2 import service_account
 import os
 import urllib
 from datetime import datetime

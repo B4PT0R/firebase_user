@@ -22,7 +22,6 @@ setuptools.setup(
     ],
     install_requires=[
         "objdict_bf",
-        "json",
         "requests"
     ],
     python_requires='>=3.6',
