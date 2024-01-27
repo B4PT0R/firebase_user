@@ -1,1 +1,1 @@
-from .firebase_user import Client
+from fb_user import Client
