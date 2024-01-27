@@ -421,19 +421,3 @@ class Client:
         if formatted.get('Authorization') and self.user:
             formatted['Authorization']=formatted['Authorization'].format(token=self.user.idToken)
         return formatted
-
-config=objdict.load("config.json")
-client=Client(config)
-client.auth.sign_in("toto.toto@toto.com","toto.toto")
-client.auth.refresh_token()
-client.auth.change_password("toto.toto.toto")
-client.auth.change_password("toto.toto")
-data=client.firestore.get_document()
-data.test="hello!"
-client.firestore.set_document(data)
-print(client.storage.list_files())
-client.storage.load_folder("test")
-client.storage.dump_folder("test")
-client.auth.log_out()
-
-
