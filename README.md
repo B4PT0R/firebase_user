@@ -15,16 +15,14 @@ $ pip install firebase-user
 
 ## Usage
 
-Minimal setting:
-
 ```python
-from firebase_user import Client
+from firebase_user import FirebaseClient
 import json
 
 with open('app_config.json','r') as f:
     config=json.load(f)
 
-client=Client(config)
+client=FirebaseClient(config)
 
 client.auth.sign_up("email","password")
 #or
