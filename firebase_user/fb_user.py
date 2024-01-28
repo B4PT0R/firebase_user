@@ -400,12 +400,12 @@ class FirebaseClient:
         
     def _make_request(self,type,**kwargs):
         response=self._request(type,**kwargs)
-        if response.status_code != 200:
+        if response and response.status_code >= 400:
             resp=objdict(response.json())
             if self.user.get("idToken") and resp.error.status=='UNAUTHENTICATED':
                 self.auth.refresh_token()
                 response=self._request(type,**kwargs)
-                if response.status_code != 200:
+                if response and response.status_code >= 400:
                     print("Error response:", response.text)
                     response.raise_for_status()    
             else:
