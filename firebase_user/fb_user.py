@@ -371,7 +371,7 @@ class Storage:
                     parent=os.path.dirname(parent)
 
     
-class Client:
+class FirebaseClient:
 
     def __init__(self, config,verbose=False):
         self.config = objdict(config)
