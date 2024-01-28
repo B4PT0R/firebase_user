@@ -277,10 +277,7 @@ class Storage:
         encoded_path = self.encode_path(f"{self.client.user.email}/{file_name}")
         request_url = self.base_url + encoded_path
         headers = {'Authorization': "Bearer {token}"}
-        response = requests.delete(request_url, headers=headers)
-        if response.status_code != 200:
-            print("Error response:", response.text)
-            response.raise_for_status()
+        response = self.client._make_request(type='delete',url=request_url, headers=headers)
         if self.client.verbose:
             print(f"Successfuly deleted {file_name}")
 
