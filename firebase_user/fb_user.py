@@ -396,7 +396,7 @@ class FirebaseClient:
     
     @property
     def authenticated(self):
-        return self.user and self.user.get('idToken')
+        return self.user is not None and self.user.get('idToken') is not None
         
     def _make_request(self,type,**kwargs):
         response=self._request(type,**kwargs)
