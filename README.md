@@ -1,6 +1,8 @@
 
 # firebase_user
 
+This is a test.
+
 This package is meant as a convenient client interface for the firebase REST API.
 It doesn't use the firebase-admin sdk and doesn't require any admin credentials.
 Only uses the firebase app config object which can safely be exposed in the client codebase.
