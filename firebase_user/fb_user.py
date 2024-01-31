@@ -261,6 +261,13 @@ class Firestore:
         if self.client.verbose:
             print("Document successfuly set in firestore.")
 
+    def delete_document(self, collection, document):
+        url = f"{self.base_url}/{collection}/{document}"
+        headers = {'Authorization': "Bearer {token}"}
+        response = self.client._make_request(type='delete', url=url, headers=headers)
+        if self.client.verbose:
+            print("Document successfuly deleted.")
+
     def start_listening(self,collection,document,interval=3,timeout=None):
         """
         Start a listening loop to wait for a change in a given firestore document.
@@ -320,8 +327,6 @@ class Storage:
             }
         return files
 
-        
-    
     def delete_file(self, file_name):
         """
         Delete a file from Firebase Storage.
