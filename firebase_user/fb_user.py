@@ -6,6 +6,8 @@ import os
 import urllib
 from datetime import datetime
 import mimetypes
+from threading import Thread
+from queue import Queue
 
 def list_files(directory):
     """
@@ -124,11 +126,39 @@ class Auth:
         self.client.user=objdict(response.json())
         if self.client.verbose:
             print("User successfuly authenticated.")
-        return self.client.user
     
+    def sign_in_with_user_object(self,user):
+        if user and user.get('idToken') and user.get('refreshToken') and user.get('email') and self.is_valid(user.idToken):
+            self.client.user=user 
+            if self.client.verbose:
+                print("Successfuly signed in with user object.")
+        else:
+            raise ValueError("Invalid or expired user idToken.")
+        
+    def is_valid(self,idToken=None):
+        """
+        Check if the given idToken is still valid.
+        """
+        user_token=self.client.user.get('idToken') if self.client.user is not None else None
+        idToken=idToken or user_token
+
+        # Firebase endpoint for verifying the idToken
+        verify_token_url = f"{self.FIREBASE_REST_API}:lookup?key={self.client.config.apiKey}"
+        headers = {"content-type": "application/json; charset=UTF-8"}
+        data = json.dumps({"idToken": idToken})
+
+        response = self.client._request(type='post', url=verify_token_url, headers=headers, data=data)
+        
+        # If the token is valid, Firebase will return the user details
+        # If the token is invalid, Firebase will return an error
+        if response.status_code == 200:
+            return True
+        else:
+            return False
+
     @property
     def authenticated(self):
-        return self.client.user is not None and self.client.user.get('idToken') is not None
+        return self.client.user is not None and self.client.user.get('idToken') is not None and self.client.user.get('refreshToken') is not None and self.client.user.get('email') is not None and self.is_valid()
 
 
     def refresh_token(self):
@@ -192,34 +222,78 @@ class Auth:
 
 class Firestore:
 
+    class Listener:
+
+        def __init__(self,client,collection,document,interval=3,timeout=None,callback=None,just_once=False):
+            self.client=client
+            self.interval=interval
+            self.timeout=timeout
+            self.callback=callback
+            self.just_once=just_once
+            self.collection=collection
+            self.document=document
+            self.base_url = f"https://firestore.googleapis.com/v1/projects/{self.client.config.projectId}/databases/(default)/documents"
+            self.stop_listening=False
+            self.listener=None
+            self.queue=None
+
+        def listen(self):
+            """
+            Start a listening loop to wait for a change in a given firestore document.
+            Will make a read request every <interval> seconds until a change is detected or <timeout> is reached (3600 seconds by default)
+            Returns the updated document.
+            """
+            self.stop_listening=False
+            last_data = self.client.firestore.get_document(self.collection,self.document)
+            if self.client.verbose:
+                print("Now listening for changes in the document...")
+            timeout=self.timeout or 3600
+            timer=0
+            while timer<timeout and not self.stop_listening:
+                time.sleep(self.interval)
+                timer+=self.interval
+                current_data = self.client.firestore.get_document(self.collection,self.document)
+                if current_data != last_data:
+                    if self.client.verbose:
+                        print("Change detected.")
+                    if self.callback:
+                        self.callback(current_data)
+                    if self.just_once:
+                        break
+                    self.queue.put(current_data)
+                    last_data=current_data
+            self.stop_listening=False
+            if self.client.verbose:
+                print("Finished listening.")
+            return current_data
+        
+        def start(self):
+            self.queue=Queue()
+            self.listener=Thread(target=self.listen)
+            self.listener.start()
+
+        def stop(self):
+            self.stop_listening=True
+            if self.listener is not None:
+                self.listener.join()
+                self.listener=None
+
+        def get_data(self):
+            return self.queue.get()
+
+        @property
+        def is_listening(self):
+            return self.listener is not None and not self.stop_listening
+
+
     def __init__(self, client):
         self.client=client
         self.base_url = f"https://firestore.googleapis.com/v1/projects/{self.client.config.projectId}/databases/(default)/documents"
-        self.stop_listener=False
+        self.stop_listening=False
+        self.is_listening=True
 
     def get_user_data(self):
-        url = f"{self.base_url}/users/{self.client.user.email}"
-        headers = {'Authorization': "Bearer {token}"}
-        response = self.client._request(type='get',url=url, headers=headers)
-        if response.status_code != 200:
-            resp=objdict(response.json())
-            if self.client.user.get("idToken") and resp.error.status=='UNAUTHENTICATED':
-                self.client.auth.refresh_token()
-                response = self.client._request(type='get',url=url, headers=headers)
-                if response.status_code != 200:
-                    if resp.error.status=='NOT_FOUND':
-                        return objdict()
-                    else:
-                        print("Error response:", response.text)
-                        response.raise_for_status()
-            elif resp.error.status=='NOT_FOUND':
-                return objdict()    
-            else:
-                print("Error response:", response.text)
-                response.raise_for_status()
-        if self.client.verbose:
-            print("User data successfuly fetched from firestore.")
-        return objdict(to_dict(response.json()))
+        return self.get_document('users',self.client.user.email)
 
     def get_document(self,collection,document):
         url = f"{self.base_url}/{collection}/{document}"
@@ -232,11 +306,15 @@ class Firestore:
                 response = self.client._request(type='get',url=url, headers=headers)
                 if response.status_code != 200:
                     if resp.error.status=='NOT_FOUND':
+                        if self.client.verbose:
+                            print("Document successfuly fetched from firestore.")
                         return objdict()
                     else:
                         print("Error response:", response.text)
                         response.raise_for_status()
             elif resp.error.status=='NOT_FOUND':
+                if self.client.verbose:
+                    print("Document successfuly fetched from firestore.")
                 return objdict()    
             else:
                 print("Error response:", response.text)
@@ -246,12 +324,7 @@ class Firestore:
         return objdict(to_dict(response.json()))
 
     def set_user_data(self, data):
-        url = f"{self.base_url}/users/{self.client.user.email}"
-        headers = {'Authorization': "Bearer {token}", 'Content-Type': 'application/json'}
-        formatted_data = to_typed_dict(data)
-        response = self.client._make_request(type='patch',url=url, headers=headers, json=formatted_data)
-        if self.client.verbose:
-            print("User data successfuly set in firestore.")
+        return self.set_document('users',self.client.user.email,data)
 
     def set_document(self,collection,document, data):
         url = f"{self.base_url}/{collection}/{document}"
@@ -268,29 +341,11 @@ class Firestore:
         if self.client.verbose:
             print("Document successfuly deleted.")
 
-    def start_listening(self,collection,document,interval=3,timeout=None):
-        """
-        Start a listening loop to wait for a change in a given firestore document.
-        Will make a request every <interval> seconds until <timeout> is reached (3600 seconds by default)
-        Returns the updated document.
-        """
-        last_data = self.get_document(collection,document)
-        if self.client.verbose:
-            print("Now listening for changes in the document...")
-        timeout=timeout or 3600
-        timer=0
-        while timer<timeout:
-            time.sleep(interval)
-            timer+=interval
-            current_data = self.get_document(collection,document)
-            if current_data != last_data:
-                if self.client.verbose:
-                    print("Change detected.")
-                break
-        if self.client.verbose:
-            print("Finished listening. Returning the updated document.")
-        return current_data
-   
+    def listener(self,collection,document,interval=3,timeout=None,callback=None,just_once=False):
+        return Firestore.Listener(self.client,collection,document,interval=interval,timeout=timeout,callback=callback,just_once=just_once)
+
+
+
 class Storage:
     def __init__(self, client):
         self.client=client
