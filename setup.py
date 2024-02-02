@@ -11,7 +11,7 @@ setuptools.setup(
     description="Client interface for the firebase REST API.",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/B4PT0R/firebase_user_client",
+    url="https://github.com/B4PT0R/firebase_user",
     packages=setuptools.find_packages(),
     package_data={
     },
