@@ -203,7 +203,7 @@ class Auth:
         data = json.dumps({"email": email, "password": password, "returnSecureToken": True})
         
         response = self.client._make_request(type='post',url=url, headers=headers, data=data)
-        self.user=objdict(response.json())
+        self.client.user=objdict(response.json())
         if self.client.verbose:
             print(f"New user successfuly created: {self.client.user.email}")
 
