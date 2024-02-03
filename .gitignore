@@ -2,6 +2,7 @@ UserFiles/
 *tmp/
 *Pandora/
 *config.json
+*test.py
 
 *geckodriver
 

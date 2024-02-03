@@ -1,4 +1,5 @@
 import requests
+from requests import HTTPError
 import json
 from objdict_bf import objdict
 import time
@@ -106,6 +107,15 @@ def to_dict(document):
     else:
         return {}
 
+class FirebaseException(Exception):
+    def __init__(self,message,*args):
+        super().__init__(self,message,*args)
+        self.message=message
+
+    def __str__(self):
+        return f"Error: {self.message}"
+
+
 class Auth:
 
     FIREBASE_REST_API = "https://identitytoolkit.googleapis.com/v1/accounts"
@@ -193,7 +203,7 @@ class Auth:
         data = json.dumps({"email": email, "password": password, "returnSecureToken": True})
         
         response = self.client._make_request(type='post',url=url, headers=headers, data=data)
-        self.client.user=objdict(response.json())
+        self.user=objdict(response.json())
         if self.client.verbose:
             print(f"New user successfuly created: {self.client.user.email}")
 
@@ -296,31 +306,15 @@ class Firestore:
     def get_document(self,collection,document):
         url = f"{self.base_url}/{collection}/{document}"
         headers = {'Authorization': "Bearer {token}"}
-        response = self.client._request(type='get',url=url, headers=headers)
-        if response.status_code != 200:
-            resp=objdict(response.json())
-            if self.client.user.get("idToken") and resp.error.status=='UNAUTHENTICATED':
-                self.client.auth.refresh_token()
-                response = self.client._request(type='get',url=url, headers=headers)
-                if response.status_code != 200:
-                    if resp.error.status=='NOT_FOUND':
-                        if self.client.verbose:
-                            print("Document successfuly fetched from firestore.")
-                        return objdict()
-                    else:
-                        print("Error response:", response.text)
-                        response.raise_for_status()
-            elif resp.error.status=='NOT_FOUND':
-                if self.client.verbose:
-                    print("Document successfuly fetched from firestore.")
-                return objdict()    
-            else:
-                print("Error response:", response.text)
-                response.raise_for_status()
+        response = self.client._make_request(type='get',url=url, headers=headers,default=lambda :"NOT_FOUND")
+        if response=="NOT_FOUND":
+            output=objdict()
+        else:
+            output=objdict(to_dict(response.json()))
         if self.client.verbose:
             print("Document successfuly fetched from firestore.")
-        return objdict(to_dict(response.json()))
-
+        return output
+    
     def set_user_data(self, data):
         return self.set_document('users',self.client.user.email,data)
 
@@ -501,22 +495,40 @@ class FirebaseClient:
             response = requests.patch(**kwargs)
         else:
             raise ValueError(f"Unsupported request type: {type}")
-        
+                 
         return response
         
-    def _make_request(self,type,**kwargs):
+    def _make_request(self,type,default=None,**kwargs):
         response=self._request(type,**kwargs)
-        if response and response.status_code >= 400:
-            resp=objdict(response.json())
-            if self.user.get("idToken") and resp.error.status=='UNAUTHENTICATED':
+        if response.status_code >= 400:
+            try:
+                error=objdict(response.json()['error'],_use_default=True)
+            except:
+                error=objdict(_use_default=True)
+            if self.user is not None and self.user.get("idToken") and error.status=='UNAUTHENTICATED':
                 self.auth.refresh_token()
                 response=self._request(type,**kwargs)
-                if response and response.status_code >= 400:
-                    print("Error response:", response.text)
-                    response.raise_for_status()    
+                if response.status_code >= 400:
+                    try:
+                        error=objdict(response.json()['error'],_use_default=True)
+                    except:
+                        error=objdict(_use_default=True)
+                    if error.status=='NOT_FOUND':
+                        if default:
+                            return default()
+                        else:
+                            raise FirebaseException("NOT_FOUND")
+                    else:
+                        msg=error.status or error.message
+                        raise FirebaseException(msg)
+            elif error.status=='NOT_FOUND':
+                if default:
+                    return default()
+                else:
+                    raise FirebaseException('NOT_FOUND')
             else:
-                print("Error response:", response.text)
-                response.raise_for_status()
+                msg=error.status or error.message
+                raise FirebaseException(msg)
         return response
     
     def _format_headers(self,headers):
