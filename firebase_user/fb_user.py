@@ -519,7 +519,7 @@ class FirebaseClient:
                         else:
                             raise FirebaseException("NOT_FOUND")
                     else:
-                        msg=error.status or error.message
+                        msg=error.status or error.message or "Unknown Firebase error"
                         raise FirebaseException(msg)
             elif error.status=='NOT_FOUND':
                 if default:
@@ -527,7 +527,7 @@ class FirebaseClient:
                 else:
                     raise FirebaseException('NOT_FOUND')
             else:
-                msg=error.status or error.message
+                msg=error.status or error.message or "Unknown Firebase error"
                 raise FirebaseException(msg)
         return response
     
