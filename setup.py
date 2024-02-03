@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="firebase_user",
-    version="0.0.15",
+    version="0.0.16",
     author="Baptiste Ferrand",
     author_email="bferrand.maths@gmail.com",
     description="Client interface for the firebase REST API.",

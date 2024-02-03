@@ -28,29 +28,47 @@ with open('app_config.json','r') as f:
 #Initialize the client with it
 client=FirebaseClient(config)
 
+#----------------Authentication-----------------
+
 #Sign up for a new account
 client.auth.sign_up("email","password")
 #or sign in
 client.auth.sign_in("email","password")
 
 #Check authentication success
-print(client.authenticated)
+print(client.auth.authenticated)
 # True
 
 #Additional auth features
 client.auth.change_password("new_password")
-client.auth.refresh_token()
-#This last method is called automatically in case the initial token expired
+client.auth.refresh_token() #This method is called automatically in case the initial token expired
+client.auth.delete_user()
+
+#---------------- Firestore -----------------
 
 #Get the user's data from firestore (ie. the document with user's email adress as name in the 'users' collection) 
-data=client.firestore.get_document()
+data=client.firestore.get_user_data()
 
 #Make changes (nested attribute-style access supported)
 data.age=34
 data.hobbies=["Guitar playing","Basketball"]
 
 #Dump changes to firestore
-client.firestore.set_document(data)
+client.firestore.set_user_data(data)
+
+#You may also read and write to a chosen document in a given collection (provided the user has permission to access it)
+data=client.firestore.get_document(collection,document)
+client.firestore.set_document(collection,document,data)
+
+#Using a firestore listener thread to detect changes in a document (optional callback called when a change is detected)
+def callback(changed_document):
+    print(f"Document changed: {changed_document}")
+
+listener=client.firestore.listener(collection,document,interval=1,timeout=3600,callback=callback)
+listener.start() # start the listening thread
+data=listener.get_data() # waits for a change in the document and captures it
+listener.stop() #stop listening
+
 
 #list files in the user's storage (includes files metadata)
 files=client.storage.list_files()

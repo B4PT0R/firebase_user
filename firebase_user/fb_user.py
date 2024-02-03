@@ -46,10 +46,11 @@ def is_newer(file1, file2):
     """
     # Parse the 'updated' timestamps into datetime objects
     file1_updated = datetime.fromisoformat(file1['updated'].rstrip('Z'))
+    file1_size=file1['size']
     file2_updated = datetime.fromisoformat(file2['updated'].rstrip('Z'))
-
-    # Compare the datetime objects
-    return file1_updated > file2_updated
+    file2_size=file2['size']
+    # Compare the datetime objects as well as size
+    return file1_updated > file2_updated and file1_size != file2_size
 
 def convert_in(value):
     if isinstance(value, str):
@@ -224,12 +225,11 @@ class Firestore:
 
     class Listener:
 
-        def __init__(self,client,collection,document,interval=3,timeout=None,callback=None,just_once=False):
+        def __init__(self,client,collection,document,interval=3,timeout=None,callback=None):
             self.client=client
             self.interval=interval
             self.timeout=timeout
             self.callback=callback
-            self.just_once=just_once
             self.collection=collection
             self.document=document
             self.base_url = f"https://firestore.googleapis.com/v1/projects/{self.client.config.projectId}/databases/(default)/documents"
@@ -258,14 +258,12 @@ class Firestore:
                         print("Change detected.")
                     if self.callback:
                         self.callback(current_data)
-                    if self.just_once:
-                        break
                     self.queue.put(current_data)
                     last_data=current_data
+            self.queue.put("<STOPPED>")
             self.stop_listening=False
             if self.client.verbose:
                 print("Finished listening.")
-            return current_data
         
         def start(self):
             self.queue=Queue()
@@ -279,7 +277,7 @@ class Firestore:
                 self.listener=None
 
         def get_data(self):
-            return self.queue.get()
+            data=self.queue.get()
 
         @property
         def is_listening(self):
@@ -341,8 +339,8 @@ class Firestore:
         if self.client.verbose:
             print("Document successfuly deleted.")
 
-    def listener(self,collection,document,interval=3,timeout=None,callback=None,just_once=False):
-        return Firestore.Listener(self.client,collection,document,interval=interval,timeout=timeout,callback=callback,just_once=just_once)
+    def listener(self,collection,document,interval=3,timeout=None,callback=None):
+        return Firestore.Listener(self.client,collection,document,interval=interval,timeout=timeout,callback=callback)
 
 
 
