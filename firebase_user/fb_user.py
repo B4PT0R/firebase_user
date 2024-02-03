@@ -288,6 +288,7 @@ class Firestore:
 
         def get_data(self):
             data=self.queue.get()
+            return data
 
         @property
         def is_listening(self):
