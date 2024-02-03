@@ -61,14 +61,16 @@ data=client.firestore.get_document(collection,document)
 client.firestore.set_document(collection,document,data)
 
 #Using a firestore listener thread to detect changes in a document (optional callback called when a change is detected)
-def callback(changed_document):
-    print(f"Document changed: {changed_document}")
+def callback(document):
+    print(f"Document changed: {document}")
 
 listener=client.firestore.listener(collection,document,interval=1,timeout=3600,callback=callback)
 listener.start() # start the listening thread
-data=listener.get_data() # waits for a change in the document and captures it
+print(listener.is_listening) #True
+data=listener.get_data() # waits until a change is detected and captures it
 listener.stop() #stop listening
 
+#----------------- Storage ------------------
 
 #list files in the user's storage (includes files metadata)
 files=client.storage.list_files()
@@ -83,7 +85,7 @@ client.storage.dump_folder("./folder")
 
 #log out
 client.auth.log_out()
-print(client.authenticated)
+print(client.auth.authenticated)
 # False
 
 ```
