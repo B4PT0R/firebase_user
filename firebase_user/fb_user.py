@@ -10,6 +10,13 @@ import mimetypes
 from threading import Thread
 from queue import Queue
 
+def convert_path_to_prefix(path):
+    return path.replace('\\','/')
+
+def convert_prefix_to_path(prefix):
+    elements=prefix.split('/')
+    return os.path.join(*elements)
+
 def list_files(directory):
     """
     List all file paths, relative to the given directory, in the directory and its subdirectories,
@@ -367,7 +374,8 @@ class Storage:
             detail_url = self.base_url + self.encode_path(item['name']) + "?alt=json"
             detail_response = self.client._make_request(type='get',url=detail_url, headers=headers)
             file_metadata = detail_response.json()
-            name=file_metadata['name'].removeprefix(self.client.user.email+'/')
+            relative_prefix=file_metadata['name'].removeprefix(self.client.user.email+'/')
+            name=convert_prefix_to_path(relative_prefix)
             files[name]={
                 'size': file_metadata.get('size', 'Unknown'),
                 'type': file_metadata.get('contentType', 'Unknown'),
@@ -434,12 +442,12 @@ class Storage:
         #Handle uploads
         for file in lfiles:
             if file not in sfiles or (file in sfiles and is_newer(lfiles[file],sfiles[file])):
-                self.upload_file(os.path.join(local_folder,file),file)
+                self.upload_file(os.path.join(local_folder,file),convert_path_to_prefix(file))
 
         # Handle deletions
         for file in sfiles:
             if not file in lfiles:
-                self.delete_file(file)
+                self.delete_file(convert_path_to_prefix(file))
 
     
     def load_folder(self, local_folder):
@@ -456,7 +464,7 @@ class Storage:
         #Handle downloads
         for file in sfiles:
             if file not in lfiles or (file in lfiles and is_newer(sfiles[file],lfiles[file])):
-                self.download_file(file,os.path.join(local_folder,file))
+                self.download_file(convert_path_to_prefix(file),os.path.join(local_folder,file))
 
         # Handle deletions
         for file in lfiles:
