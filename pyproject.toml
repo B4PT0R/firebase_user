@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "firebase_user"
+version = "0.3.0"
+authors = [
+    {name = "Baptiste Ferrand", email = "bferrand.maths@gmail.com"}
+]
+description = "Client-side Firebase REST API interface designed for Streamlit applications - no admin credentials required."
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "requests>=2.25.0",
+    "sseclient-py>=1.7.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/B4PT0R/firebase_user"
+Repository = "https://github.com/B4PT0R/firebase_user"
+Issues = "https://github.com/B4PT0R/firebase_user/issues"
+
+[tool.setuptools]
+packages = ["firebase_user"]
