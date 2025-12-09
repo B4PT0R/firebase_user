@@ -1,10 +1,12 @@
 """Storage module for Firebase client."""
 
+import mimetypes
 import urllib.parse
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, Any
+from typing import TYPE_CHECKING, Dict, Any, Optional
 
 from .utils import list_files, has_changed, is_newer, convert_path_to_prefix, convert_prefix_to_path
+from .exceptions import FirebaseException, StorageException
 
 if TYPE_CHECKING:
     from .client import FirebaseClient
@@ -20,7 +22,7 @@ class Storage:
     def _get_user_prefix(self) -> str:
         """Get the authenticated user's storage prefix."""
         if not self.client.user or not self.client.user.get('email'):
-            raise ValueError("No authenticated user.")
+            raise StorageException("No authenticated user.")
         return f"{self.client.user['email']}/"
 
     def _normalize_remote_path(self, path: str) -> str:
@@ -30,6 +32,13 @@ class Storage:
     def encode_path(self, path: str) -> str:
         """URL-encode the path."""
         return urllib.parse.quote(path, safe='')
+
+    def _guess_content_type(self, local_path: Path, override: Optional[str] = None) -> str:
+        """Guess content type or use override."""
+        if override:
+            return override
+        mime, _ = mimetypes.guess_type(str(local_path))
+        return mime or 'application/octet-stream'
 
     def list_files(self) -> Dict[str, Dict[str, Any]]:
         """List files in the user's storage directory with additional metadata."""
@@ -81,24 +90,129 @@ class Storage:
         if self.client.verbose:
             print(f"Successfully downloaded user_storage/{remote_path} to {local_file.absolute()}")
 
-    def upload_file(self, local_path: str, remote_path: str) -> None:
-        """Upload a file to Firebase Storage."""
+    def upload_file(self, local_path: str, remote_path: str, content_type: Optional[str] = None) -> None:
+        """Upload a file to Firebase Storage (simple upload)."""
         local_file = Path(local_path)
         if not local_file.exists():
-            raise FileNotFoundError(f"Local file not found: {local_path}")
+            raise StorageException(f"Local file not found: {local_path}")
         if not local_file.is_file():
-            raise ValueError(f"Path is not a file: {local_path}")
+            raise StorageException(f"Path is not a file: {local_path}")
 
         user_prefix = self._get_user_prefix()
         normalized_path = self._normalize_remote_path(remote_path)
         encoded_path = self.encode_path(user_prefix + normalized_path)
         request_url = self.base_url + encoded_path
         headers = {'Authorization': "Bearer {token}"}
+        headers['Content-Type'] = self._guess_content_type(local_file, content_type)
+
         with open(local_file, 'rb') as f:
             files = {'file': f}
             self.client._make_request(type='post', url=request_url, headers=headers, files=files)
         if self.client.verbose:
             print(f"Successfully uploaded {local_file.absolute()} to user_storage/{remote_path}")
+
+    def upload_file_resumable(
+        self,
+        local_path: str,
+        remote_path: str,
+        content_type: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        chunk_size: Optional[int] = None
+    ) -> None:
+        """
+        Upload a file using the resumable upload protocol (better for large files/unstable connections).
+        If chunk_size is provided, uploads in chunks with Content-Range.
+        """
+        local_file = Path(local_path)
+        if not local_file.exists():
+            raise StorageException(f"Local file not found: {local_path}")
+        if not local_file.is_file():
+            raise StorageException(f"Path is not a file: {local_path}")
+
+        user_prefix = self._get_user_prefix()
+        normalized_path = self._normalize_remote_path(remote_path)
+        encoded_name = self.encode_path(user_prefix + normalized_path)
+        content_type = self._guess_content_type(local_file, content_type)
+
+        session_url = f"https://firebasestorage.googleapis.com/v0/b/{self.client.config['storageBucket']}/o?uploadType=resumable&name={encoded_name}"
+        init_headers = {
+            'Authorization': "Bearer {token}",
+            'X-Upload-Content-Type': content_type,
+            'Content-Type': 'application/json; charset=UTF-8'
+        }
+        init_body = {"metadata": metadata} if metadata else {}
+
+        init_response = self.client._make_request(
+            type='post',
+            url=session_url,
+            headers=init_headers,
+            json=init_body
+        )
+        upload_url = init_response.headers.get('Location')
+        if not upload_url:
+            raise StorageException("Failed to obtain upload session URL.")
+
+        file_size = local_file.stat().st_size
+        if not chunk_size or chunk_size <= 0:
+            with open(local_file, 'rb') as f:
+                data = f.read()
+            upload_headers = {
+                'Content-Type': content_type,
+                'Content-Length': str(len(data))
+            }
+            self.client._make_request(
+                type='put',
+                url=upload_url,
+                headers=upload_headers,
+                data=data
+            )
+        else:
+            start = 0
+            with open(local_file, 'rb') as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    end = start + len(chunk) - 1
+                    headers = {
+                        'Content-Type': content_type,
+                        'Content-Length': str(len(chunk)),
+                        'Content-Range': f"bytes {start}-{end}/{file_size}"
+                    }
+                    response = self.client._make_request(
+                        type='put',
+                        url=upload_url,
+                        headers=headers,
+                        data=chunk
+                    )
+                    # Accept 308 (resume) mid-transfer
+                    if response.status_code not in (200, 201, 308):
+                        raise StorageException(f"Unexpected status during upload: {response.status_code}")
+                    start += len(chunk)
+
+        if self.client.verbose:
+            print(f"Resumable upload complete for {local_file.absolute()} to user_storage/{remote_path}")
+
+    def get_metadata(self, remote_path: str) -> Dict[str, Any]:
+        """Fetch object metadata (including download tokens)."""
+        user_prefix = self._get_user_prefix()
+        normalized_path = self._normalize_remote_path(remote_path)
+        encoded_path = self.encode_path(user_prefix + normalized_path)
+        request_url = self.base_url + encoded_path
+        headers = {'Authorization': "Bearer {token}"}
+        response = self.client._make_request(type='get', url=request_url, headers=headers)
+        return response.json()
+
+    def get_download_url(self, remote_path: str) -> str:
+        """Return a download URL (with token if present in metadata)."""
+        metadata = self.get_metadata(remote_path)
+        download_tokens = metadata.get('downloadTokens') or metadata.get('metadata', {}).get('firebaseStorageDownloadTokens')
+        encoded_path = self.encode_path(self._get_user_prefix() + self._normalize_remote_path(remote_path))
+        url = f"https://firebasestorage.googleapis.com/v0/b/{self.client.config['storageBucket']}/o/{encoded_path}?alt=media"
+        if download_tokens:
+            token = download_tokens.split(',')[0]
+            url += f"&token={token}"
+        return url
 
     def dump_folder(self, local_folder: str) -> None:
         """

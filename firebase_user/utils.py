@@ -1,5 +1,6 @@
 """Utility functions for Firebase client."""
 
+import base64
 import hashlib
 import mimetypes
 from datetime import datetime, timezone
@@ -89,18 +90,23 @@ def convert_in(value: Any) -> Dict[str, Any]:
     """Convert Python value to Firestore typed value."""
     if isinstance(value, str):
         return {'stringValue': value}
-    elif isinstance(value, bool):
+    if isinstance(value, bool):
         return {'booleanValue': value}
-    elif isinstance(value, int):
-        return {'integerValue': value}
-    elif isinstance(value, float):
+    if isinstance(value, int):
+        return {'integerValue': str(value)}
+    if isinstance(value, float):
         return {'doubleValue': value}
-    elif isinstance(value, dict):
+    if isinstance(value, datetime):
+        iso_value = value.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
+        return {'timestampValue': iso_value}
+    if isinstance(value, (bytes, bytearray)):
+        b64 = base64.b64encode(bytes(value)).decode('ascii')
+        return {'bytesValue': b64}
+    if isinstance(value, dict):
         return {'mapValue': {'fields': {k: convert_in(v) for k, v in value.items()}}}
-    elif isinstance(value, list):
+    if isinstance(value, list):
         return {'arrayValue': {'values': [convert_in(v) for v in value]}}
-    else:
-        return {'nullValue': None}
+    return {'nullValue': None}
 
 
 def to_typed_dict(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -112,28 +118,38 @@ def convert_out(value: Dict[str, Any]) -> Any:
     """Convert Firestore typed value to Python value."""
     if 'nullValue' in value:
         return None
-    elif 'stringValue' in value:
+    if 'stringValue' in value:
         return value['stringValue']
-    elif 'booleanValue' in value:
+    if 'booleanValue' in value:
         return value['booleanValue']
-    elif 'integerValue' in value:
+    if 'integerValue' in value:
         return int(value['integerValue'])
-    elif 'doubleValue' in value:
+    if 'doubleValue' in value:
         return float(value['doubleValue'])
-    elif 'timestampValue' in value:
-        return value['timestampValue']  # Or convert to a Python datetime object
-    elif 'geoPointValue' in value:
+    if 'timestampValue' in value:
+        ts = value['timestampValue']
+        # Normalise Z to +00:00 for fromisoformat
+        ts = ts.replace('Z', '+00:00')
+        try:
+            return datetime.fromisoformat(ts)
+        except ValueError:
+            return value['timestampValue']
+    if 'bytesValue' in value:
+        try:
+            return base64.b64decode(value['bytesValue'])
+        except Exception:
+            return value['bytesValue']
+    if 'geoPointValue' in value:
         return value['geoPointValue']  # Returns a dict with 'latitude' and 'longitude'
-    elif 'referenceValue' in value:
+    if 'referenceValue' in value:
         return value['referenceValue']  # Firestore document reference
-    elif 'mapValue' in value:
+    if 'mapValue' in value:
         content = value['mapValue'].get('fields', {})
         return {key: convert_out(val) for key, val in content.items()}
-    elif 'arrayValue' in value:
+    if 'arrayValue' in value:
         content = value['arrayValue'].get('values', [])
         return [convert_out(item) for item in content]
-    else:
-        return None  # Add additional cases as needed
+    return None  # Add additional cases as needed
 
 
 def to_dict(document: Dict[str, Any]) -> Dict[str, Any]:

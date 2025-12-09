@@ -10,3 +10,23 @@ class FirebaseException(Exception):
 
     def __str__(self) -> str:
         return f"Error: {self.message}"
+
+
+class AuthException(FirebaseException):
+    """Authentication-related errors."""
+
+
+class FirestoreException(FirebaseException):
+    """Firestore-related errors."""
+
+
+class StorageException(FirebaseException):
+    """Storage-related errors."""
+
+
+class FunctionsException(FirebaseException):
+    """Cloud Functions-related errors."""
+
+
+class RealtimeDatabaseException(FirebaseException):
+    """Realtime Database-related errors."""

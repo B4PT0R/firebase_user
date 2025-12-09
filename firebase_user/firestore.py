@@ -6,7 +6,7 @@ from queue import Queue
 from typing import TYPE_CHECKING, Dict, Any, Optional, Callable, List, Tuple, Literal
 
 from .utils import to_typed_dict, to_dict, convert_in
-from .exceptions import FirebaseException
+from .exceptions import FirebaseException, FirestoreException
 
 if TYPE_CHECKING:
     from .client import FirebaseClient
@@ -99,7 +99,7 @@ class Firestore:
     def get_user_data(self) -> Optional[Dict[str, Any]]:
         """Get the current user's document from the 'users' collection."""
         if not self.client.user or not self.client.user.get('email'):
-            raise ValueError("No authenticated user.")
+            raise FirestoreException("No authenticated user.")
         return self.get_document('users', self.client.user['email'])
 
     def document_exists(self, collection: str, document: str) -> bool:
@@ -136,12 +136,12 @@ class Firestore:
                 if self.client.verbose:
                     print(f"Document not found: {collection}/{document}")
                 return default
-            raise
+            raise FirestoreException(str(e)) from e
 
     def set_user_data(self, data: Dict[str, Any]) -> None:
         """Set the current user's document in the 'users' collection."""
         if not self.client.user or not self.client.user.get('email'):
-            raise ValueError("No authenticated user.")
+            raise FirestoreException("No authenticated user.")
         self.set_document('users', self.client.user['email'], data)
 
     def set_document(self, collection: str, document: str, data: Dict[str, Any]) -> None:
@@ -236,7 +236,10 @@ class Firestore:
         collection_path: str,
         where: Optional[List[Tuple[str, str, Any]]] = None,
         order_by: Optional[List[Tuple[str, str]]] = None,
-        limit: Optional[int] = None
+        limit: Optional[int] = None,
+        start_at: Optional[Any] = None,
+        end_at: Optional[Any] = None,
+        offset: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """
         Query documents in a collection with filters and ordering.
@@ -246,6 +249,9 @@ class Firestore:
                      Operators: '==', '<', '<=', '>', '>=', '!=', 'in', 'array-contains'
         :param order_by: List of (field, direction) tuples. Direction: 'ASCENDING' or 'DESCENDING'
         :param limit: Maximum number of results
+        :param start_at: Cursor start value(s) (single value or list matching order_by)
+        :param end_at: Cursor end value(s) (single value or list matching order_by)
+        :param offset: Number of results to skip (offset)
         :return: List of documents matching the query
         """
         # Build structured query
@@ -265,7 +271,9 @@ class Firestore:
                     '>=': 'GREATER_THAN_OR_EQUAL',
                     '!=': 'NOT_EQUAL',
                     'in': 'IN',
-                    'array-contains': 'ARRAY_CONTAINS'
+                    'not-in': 'NOT_IN',
+                    'array-contains': 'ARRAY_CONTAINS',
+                    'array-contains-any': 'ARRAY_CONTAINS_ANY'
                 }
 
                 filter_obj = {
@@ -301,6 +309,17 @@ class Firestore:
         # Add limit
         if limit:
             structured_query['limit'] = limit
+        if offset:
+            structured_query['offset'] = offset
+
+        def _cursor_payload(value: Any) -> Dict[str, Any]:
+            values = value if isinstance(value, (list, tuple)) else [value]
+            return {'values': [convert_in(v) for v in values], 'before': False}
+
+        if start_at is not None:
+            structured_query['startAt'] = _cursor_payload(start_at)
+        if end_at is not None:
+            structured_query['endAt'] = _cursor_payload(end_at)
 
         # Determine parent path for subcollections
         parent_parts = collection_path.split('/')[:-1]
@@ -346,3 +365,119 @@ class Firestore:
     ) -> Listener:
         """Create a document listener."""
         return Listener(self.client, collection, document, interval=interval, timeout=timeout, callback=callback)
+
+    # -------- Batch / commit helpers --------
+    def build_set_write(
+        self,
+        collection: str,
+        document: str,
+        data: Dict[str, Any],
+        merge_fields: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Build a Firestore write payload for set/update operations.
+        """
+        doc_name = f"{self.base_url}/{collection}/{document}"
+        write: Dict[str, Any] = {
+            "update": {
+                "name": doc_name,
+                **to_typed_dict(data)
+            }
+        }
+        if merge_fields:
+            write["updateMask"] = {"fieldPaths": merge_fields}
+        return write
+
+    def build_delete_write(self, collection: str, document: str) -> Dict[str, Any]:
+        """Build a Firestore write payload for deletions."""
+        doc_name = f"{self.base_url}/{collection}/{document}"
+        return {"delete": doc_name}
+
+    def commit(self, writes: List[Dict[str, Any]], transaction: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Perform a commit request with a list of write operations.
+        Use build_set_write / build_delete_write to help build the payload.
+        You can pass a transaction ID from begin_transaction.
+        """
+        if not writes:
+            return []
+
+        url = f"{self.base_url}:commit"
+        headers = {'Authorization': "Bearer {token}", 'Content-Type': 'application/json'}
+        body: Dict[str, Any] = {"writes": writes}
+        if transaction:
+            body["transaction"] = transaction
+        response = self.client._make_request(
+            type='post',
+            url=url,
+            headers=headers,
+            json=body
+        )
+        result = response.json()
+        return result.get("writeResults", [])
+
+    def build_transform_write(
+        self,
+        collection: str,
+        document: str,
+        transforms: List[Tuple[str, str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Build a transform write (increment, arrayUnion, arrayRemove).
+        """
+        field_transforms = []
+        for field, op, value in transforms:
+            if op == 'increment':
+                field_transforms.append({
+                    "fieldPath": field,
+                    "increment": convert_in(value)
+                })
+            elif op == 'arrayUnion':
+                values = value if isinstance(value, (list, tuple)) else [value]
+                field_transforms.append({
+                    "fieldPath": field,
+                    "appendMissingElements": {"values": [convert_in(v) for v in values]}
+                })
+            elif op == 'arrayRemove':
+                values = value if isinstance(value, (list, tuple)) else [value]
+                field_transforms.append({
+                    "fieldPath": field,
+                    "removeAllFromArray": {"values": [convert_in(v) for v in values]}
+                })
+            else:
+                raise FirestoreException(f"Unsupported transform operation: {op}")
+
+        doc_name = f"{self.base_url}/{collection}/{document}"
+        return {
+            "transform": {
+                "document": doc_name,
+                "fieldTransforms": field_transforms
+            }
+        }
+
+    def begin_transaction(self, read_only: bool = False) -> str:
+        """Begin a Firestore transaction and return its ID."""
+        url = f"{self.base_url}:beginTransaction"
+        headers = {'Authorization': "Bearer {token}", 'Content-Type': 'application/json'}
+        options = {"readOnly": {}} if read_only else {}
+        response = self.client._make_request(
+            type='post',
+            url=url,
+            headers=headers,
+            json={"options": options} if options else {}
+        )
+        transaction = response.json().get("transaction")
+        if not transaction:
+            raise FirestoreException("Failed to start transaction")
+        return transaction
+
+    def rollback(self, transaction: str) -> None:
+        """Rollback a transaction."""
+        url = f"{self.base_url}:rollback"
+        headers = {'Authorization': "Bearer {token}", 'Content-Type': 'application/json'}
+        self.client._make_request(
+            type='post',
+            url=url,
+            headers=headers,
+            json={"transaction": transaction}
+        )

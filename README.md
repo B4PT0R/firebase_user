@@ -5,14 +5,15 @@ A client-side Firebase REST API interface designed for Streamlit applications - 
 This package provides a convenient client interface for the Firebase REST API without using the firebase-admin SDK. It only requires your Firebase app config (which can be safely exposed in client code), making it perfect for Streamlit apps and other client-side applications.
 
 **Key Features:**
-- 🔐 **Authentication** - Email/password auth, session persistence, password reset emails
-- 📊 **Firestore** - CRUD operations, queries, subcollections support
-- 📁 **Storage** - File upload/download with folder sync
-- ⚡ **Cloud Functions** - Call serverless functions (callable)
-- 🔥 **Realtime Database** - Real-time data sync with SSE streaming
-- 🚀 **Streamlit-ready** - Built-in helpers for session management
-- ✅ **Type hints** - Full type annotations for better DX
-- 🔒 **Secure** - No admin credentials needed, relies on Firebase Security Rules
+- Authentication - Email/password auth, session persistence, password reset emails
+- Firestore - CRUD operations, queries, subcollections support
+- Storage - File upload/download with folder sync
+- Cloud Functions - Call serverless functions (callable)
+- Realtime Database - Real-time data sync with SSE streaming
+- Streamlit-ready - Built-in helpers for session management
+- Type hints - Full type annotations for better DX
+- App Check ready - Optional App Check token injection
+- Secure - No admin credentials needed, relies on Firebase Security Rules
 
 ## Installation
 
@@ -38,7 +39,9 @@ config = {
 }
 
 client = FirebaseClient(config)
-```
+# Optional: tweak HTTP behavior
+# client = FirebaseClient(config, timeout=10, retries=2, backoff=0.5, app_check_token="APP_CHECK_TOKEN")
+``` 
 
 ### Authentication
 
@@ -49,12 +52,16 @@ client.auth.sign_up("user@example.com", "password123")
 # Sign in
 client.auth.sign_in("user@example.com", "password123")
 
+# Sign in with OAuth provider (e.g., Google)
+# client.auth.sign_in_with_oauth("google.com", id_token="GOOGLE_ID_TOKEN")
+# Supported providerIds include: google.com, github.com, apple.com, facebook.com, twitter.com, microsoft.com, yahoo.com
+
 # Check authentication
 print(client.auth.authenticated)  # True
 
 # Get user info (safe for display - no tokens)
 user_info = client.auth.get_user_info()
-# → {'uid': '...', 'email': '...', 'emailVerified': False, ...}
+# -> {'uid': '...', 'email': '...', 'emailVerified': False, ...}
 
 # Session persistence (for Streamlit)
 session_data = client.auth.to_session_dict()  # Save to st.session_state
@@ -72,6 +79,11 @@ client.auth.send_email_verification()
 
 # Update profile
 client.auth.update_profile(display_name="John Doe")
+client.auth.update_email("new@mail.com")
+
+# Link/Unlink OAuth providers
+# client.auth.link_provider("google.com", id_token="GOOGLE_ID_TOKEN")
+# client.auth.unlink_provider("google.com")
 
 # Change password
 client.auth.change_password("new_password")
@@ -79,6 +91,11 @@ client.auth.change_password("new_password")
 # Log out
 client.auth.log_out()
 ```
+
+Tips:
+- `request_uri` can be any valid URL; it just needs to match the authorized domains on your Firebase project.
+- For Apple/Facebook/Twitter etc., provide the provider access token instead of an ID token.
+- Use `to_session_dict()` / `from_session_dict()` or `restore_session(refresh_token)` to keep users signed in across page reloads.
 
 ### Firestore
 
@@ -102,12 +119,22 @@ client.firestore.set_document('posts', 'post1', {'title': 'Hello', 'views': 0})
 # Partial update (only specified fields)
 client.firestore.update_document('posts', 'post1', {'views': 100})
 
+# Query with cursors/offset
+posts = client.firestore.query(
+    'posts',
+    where=[('published', '==', True)],
+    order_by=[('created_at', 'DESCENDING')],
+    limit=10,
+    start_at='2024-01-01T00:00:00Z',
+    offset=5
+)
+
 # Delete document
 client.firestore.delete_document('posts', 'post1')
 
 # List all documents in collection
 users = client.firestore.list_documents('users')
-# → [{'id': 'john', 'age': 30, ...}, {'id': 'jane', ...}]
+# -> [{'id': 'john', 'age': 30, ...}, {'id': 'jane', ...}]
 
 # Query with filters
 posts = client.firestore.query(
@@ -132,7 +159,31 @@ listener = client.firestore.listener('users', 'john', callback=on_change)
 listener.start()
 # ... later
 listener.stop()
-```
+
+# Batch writes (commit)
+writes = [
+    client.firestore.build_set_write('posts', 'post1', {'title': 'Hello', 'views': 0}),
+    client.firestore.build_delete_write('posts', 'old_post')
+]
+results = client.firestore.commit(writes)
+
+# Field transforms (increment/arrayUnion/arrayRemove)
+transform = client.firestore.build_transform_write(
+    'posts',
+    'post1',
+    [
+        ('views', 'increment', 1),
+        ('tags', 'arrayUnion', ['news'])
+    ]
+)
+client.firestore.commit([transform])
+
+# Transactions
+tx = client.firestore.begin_transaction()
+# ... perform reads with the transaction via HTTP (advanced) ...
+client.firestore.commit([transform], transaction=tx)
+client.firestore.rollback(tx)  # or rollback if needed
+``` 
 
 ### Storage
 
@@ -143,14 +194,22 @@ files = client.storage.list_files()
 # Upload/Download files
 client.storage.upload_file('local.txt', 'remote/path.txt')
 client.storage.download_file('remote/path.txt', 'local.txt')
+# Large files with resumable upload (safer on flaky networks)
+client.storage.upload_file_resumable('big.bin', 'remote/big.bin')
+client.storage.upload_file('local.txt', 'remote/path.txt', content_type='text/plain')  # override content type
+# Chunked resumable upload with metadata
+client.storage.upload_file_resumable('big.bin', 'remote/big.bin', chunk_size=256*1024, metadata={'role': 'backup'})
+# Fetch metadata / download URL
+meta = client.storage.get_metadata('remote/path.txt')
+download_url = client.storage.get_download_url('remote/path.txt')
 
 # Delete file
 client.storage.delete_file('remote/path.txt')
 
-# Unidirectional sync: local → cloud (deletes remote files not in local)
+# Unidirectional sync: local -> cloud (deletes remote files not in local)
 client.storage.dump_folder('./my_folder')
 
-# Unidirectional sync: cloud → local (deletes local files not in remote)
+# Unidirectional sync: cloud -> local (deletes local files not in remote)
 client.storage.load_folder('./my_folder')
 
 # Bidirectional sync: merge local and remote (no deletions, newer wins)
@@ -174,6 +233,10 @@ result = client.functions.call('myFunction', data={'key': 'value'}, region='euro
 client.functions.set_region('europe-west1')
 ```
 
+Notes:
+- App Check token (if provided to `FirebaseClient`) is sent automatically in `X-Firebase-AppCheck`.
+- Functions calls include `Authorization: Bearer <idToken>` when the user is logged in.
+
 ### Realtime Database
 
 ```python
@@ -189,10 +252,13 @@ key = client.rtdb.push('messages', {
     'text': 'Hello!',
     'timestamp': '2024-01-01'
 })
-# → Returns: '-N7qPZ9xK...' (auto-generated key)
+# -> Returns: '-N7qPZ9xK...' (auto-generated key)
 
 # Update specific fields
 client.rtdb.update('users/john', {'age': 31, 'city': 'Paris'})
+
+# Query filters
+messages_page = client.rtdb.get('messages', order_by='$key', start_at='-N7', limit_to_first=20)
 
 # Delete data
 client.rtdb.delete('messages/old_message')
@@ -258,6 +324,8 @@ else:
 
 **Important:** This package uses Firebase Authentication client-side tokens, not admin credentials. Your Firebase Security Rules are the **only** line of defense for data access control.
 
+If you use App Check, pass a token (string or callable) with `app_check_token` when constructing `FirebaseClient`; it will be sent in `X-Firebase-AppCheck` automatically.
+
 Example Firestore Security Rules:
 ```javascript
 rules_version = '2';
@@ -286,11 +354,13 @@ service cloud.firestore {
 - `storage` - Cloud Storage operations
 - `functions` - Cloud Functions (callable)
 - `rtdb` - Realtime Database operations
+- Exceptions: `AuthException`, `FirestoreException`, `StorageException`, `FunctionsException`, `RealtimeDatabaseException` (all subclass `FirebaseException`)
 
 ### Auth Methods
 
 - `sign_in(email, password)` - Authenticate user
 - `sign_up(email, password)` - Create new user
+- `sign_in_with_oauth(provider_id, access_token=None, id_token=None, request_uri="http://localhost")` - Sign in with OAuth provider (Google/Apple/GitHub/etc.)
 - `sign_in_with_user_object(user)` - Restore from user object
 - `restore_session(refresh_token)` - Restore from refresh token
 - `get_user_info()` - Get public user data (no tokens)
@@ -299,11 +369,14 @@ service cloud.firestore {
 - `send_password_reset_email(email)` - Send reset email (Firebase emails, free!)
 - `send_email_verification()` - Send verification email
 - `update_profile(display_name, photo_url)` - Update profile
+- `update_email(new_email)` - Update email
 - `change_password(new_password)` - Change password
+- `link_provider(provider_id, access_token=None, id_token=None, request_uri="http://localhost")` - Link OAuth provider to user
+- `unlink_provider(provider_ids)` - Unlink provider(s) from user
 - `delete_user()` - Delete current user
 - `log_out()` - Log out
 - `is_valid(token)` - Check if token is valid
-- `authenticated` - Property: is user authenticated?
+- `authenticated` - Property: is user authenticated
 
 ### Firestore Methods
 
@@ -316,15 +389,20 @@ service cloud.firestore {
 - `query(collection_path, where=None, order_by=None, limit=None)` - Query documents
 - `get_user_data()` / `set_user_data(data)` - User document shortcuts
 - `listener(collection, document, ...)` - Create document listener
+- `build_set_write(collection, document, data, merge_fields=None)` - Helper for commit payloads
+- `build_delete_write(collection, document)` - Helper for commit payloads
+- `commit(writes)` - Send batch commit request
 
 ### Storage Methods
 
 - `list_files()` - List files with metadata
 - `upload_file(local_path, remote_path)` - Upload file
+- `upload_file_resumable(local_path, remote_path, content_type=None, metadata=None)` - Resumable upload
 - `download_file(remote_path, local_path)` - Download file
 - `delete_file(remote_path)` - Delete file
-- `dump_folder(local_folder)` - Sync local → cloud
-- `load_folder(local_folder)` - Sync cloud → local
+- `dump_folder(local_folder)` - Sync local -> cloud
+- `load_folder(local_folder)` - Sync cloud -> local
+- `sync_folder(local_folder)` - Bidirectional sync
 
 ### Cloud Functions Methods
 

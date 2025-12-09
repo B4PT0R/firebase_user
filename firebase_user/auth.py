@@ -3,6 +3,8 @@
 import json
 from typing import TYPE_CHECKING, Dict, Any, Optional
 
+from .exceptions import AuthException
+
 if TYPE_CHECKING:
     from .client import FirebaseClient
 
@@ -11,6 +13,7 @@ class Auth:
     """Handle Firebase Authentication operations."""
 
     FIREBASE_REST_API = "https://identitytoolkit.googleapis.com/v1/accounts"
+    FIREBASE_REST_IDP = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp"
 
     def __init__(self, client: 'FirebaseClient'):
         self.client = client
@@ -25,9 +28,49 @@ class Auth:
         data = json.dumps({"email": email, "password": password, "returnSecureToken": True})
 
         response = self.client._make_request(type='post', url=url, headers=headers, data=data)
-        self.client.user = response.json()
+        try:
+            self.client.user = response.json()
+        except Exception as exc:
+            raise AuthException("Failed to parse authentication response") from exc
         if self.client.verbose:
             print("User successfully authenticated.")
+
+    def sign_in_with_oauth(
+        self,
+        provider_id: str,
+        access_token: Optional[str] = None,
+        id_token: Optional[str] = None,
+        request_uri: str = "http://localhost"
+    ) -> None:
+        """
+        Authenticate using an OAuth provider (Google/GitHub/Apple/...).
+        Provide either access_token or id_token from the provider.
+        """
+        if not access_token and not id_token:
+            raise AuthException("access_token or id_token required for OAuth sign-in.")
+
+        post_body_parts = [f"providerId={provider_id}"]
+        if access_token:
+            post_body_parts.append(f"access_token={access_token}")
+        if id_token:
+            post_body_parts.append(f"id_token={id_token}")
+        post_body = "&".join(post_body_parts)
+
+        url = f"{self.FIREBASE_REST_IDP}?key={self.client.config['apiKey']}"
+        headers = {"content-type": "application/json; charset=UTF-8"}
+        data = json.dumps({
+            "postBody": post_body,
+            "requestUri": request_uri,
+            "returnSecureToken": True
+        })
+
+        response = self.client._make_request(type='post', url=url, headers=headers, data=data)
+        try:
+            self.client.user = response.json()
+        except Exception as exc:
+            raise AuthException("Failed to parse OAuth authentication response") from exc
+        if self.client.verbose:
+            print(f"User authenticated with provider {provider_id}.")
 
     def sign_in_with_user_object(self, user: Dict[str, Any]) -> None:
         """Sign in using a previously authenticated user object."""
@@ -36,7 +79,7 @@ class Auth:
             if self.client.verbose:
                 print("Successfully signed in with user object.")
         else:
-            raise ValueError("Invalid or expired user idToken.")
+            raise AuthException("Invalid or expired user idToken.")
 
     def is_valid(self, idToken: Optional[str] = None) -> bool:
         """Check if the given idToken is still valid."""
@@ -69,7 +112,7 @@ class Auth:
     def refresh_token(self) -> None:
         """Refresh the user's idToken using the refreshToken."""
         if not self.client.user or not self.client.user.get('refreshToken'):
-            raise ValueError("No refresh token available.")
+            raise AuthException("No refresh token available.")
 
         url = f"https://securetoken.googleapis.com/v1/token?key={self.client.config['apiKey']}"
         headers = {"content-type": "application/json; charset=UTF-8"}
@@ -106,7 +149,7 @@ class Auth:
     def delete_user(self) -> None:
         """Delete the authenticated user from Firebase Authentication."""
         if not self.client.user or not self.client.user.get('idToken'):
-            raise ValueError("No authenticated user to delete.")
+            raise AuthException("No authenticated user to delete.")
 
         url = f"{self.FIREBASE_REST_API}:delete?key={self.client.config['apiKey']}"
         headers = {"content-type": "application/json; charset=UTF-8"}
@@ -119,7 +162,7 @@ class Auth:
     def change_password(self, new_password: str) -> None:
         """Update the password of the authenticated user."""
         if not self.client.user or not self.client.user.get('idToken'):
-            raise ValueError("No authenticated user.")
+            raise AuthException("No authenticated user.")
 
         url = f"{self.FIREBASE_REST_API}:update?key={self.client.config['apiKey']}"
         headers = {"content-type": "application/json; charset=UTF-8"}
@@ -139,7 +182,7 @@ class Auth:
             Dictionary with: uid, email, emailVerified, displayName, photoUrl, createdAt, lastLoginAt
         """
         if not self.client.user or not self.client.user.get('idToken'):
-            raise ValueError("No authenticated user.")
+            raise AuthException("No authenticated user.")
 
         url = f"{self.FIREBASE_REST_API}:lookup?key={self.client.config['apiKey']}"
         headers = {"content-type": "application/json; charset=UTF-8"}
@@ -209,7 +252,7 @@ class Auth:
         Uses Firebase's built-in email service (free).
         """
         if not self.client.user or not self.client.user.get('idToken'):
-            raise ValueError("No authenticated user.")
+            raise AuthException("No authenticated user.")
 
         url = f"https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key={self.client.config['apiKey']}"
         headers = {"content-type": "application/json; charset=UTF-8"}
@@ -227,7 +270,7 @@ class Auth:
         :param photo_url: New photo URL (None to keep current)
         """
         if not self.client.user or not self.client.user.get('idToken'):
-            raise ValueError("No authenticated user.")
+            raise AuthException("No authenticated user.")
 
         update_data: Dict[str, Any] = {"idToken": self.client.user['idToken'], "returnSecureToken": True}
 
@@ -244,6 +287,81 @@ class Auth:
         self.client.user = response.json()
         if self.client.verbose:
             print("Profile updated successfully")
+
+    def update_email(self, new_email: str) -> None:
+        """Update the email of the authenticated user."""
+        if not self.client.user or not self.client.user.get('idToken'):
+            raise AuthException("No authenticated user.")
+
+        url = f"{self.FIREBASE_REST_API}:update?key={self.client.config['apiKey']}"
+        headers = {"content-type": "application/json; charset=UTF-8"}
+        data = json.dumps({"idToken": self.client.user['idToken'], "email": new_email, "returnSecureToken": True})
+
+        response = self.client._make_request(type='post', url=url, headers=headers, data=data)
+        self.client.user = response.json()
+        if self.client.verbose:
+            print("Email updated successfully")
+
+    def link_provider(
+        self,
+        provider_id: str,
+        access_token: Optional[str] = None,
+        id_token: Optional[str] = None,
+        request_uri: str = "http://localhost"
+    ) -> None:
+        """
+        Link an OAuth provider to the current user.
+        """
+        if not self.client.user or not self.client.user.get('idToken'):
+            raise AuthException("No authenticated user.")
+        if not access_token and not id_token:
+            raise AuthException("access_token or id_token required for linking provider.")
+
+        post_body_parts = [f"providerId={provider_id}"]
+        if access_token:
+            post_body_parts.append(f"access_token={access_token}")
+        if id_token:
+            post_body_parts.append(f"id_token={id_token}")
+        post_body = "&".join(post_body_parts)
+
+        url = f"{self.FIREBASE_REST_IDP}?key={self.client.config['apiKey']}"
+        headers = {"content-type": "application/json; charset=UTF-8"}
+        data = json.dumps({
+            "idToken": self.client.user['idToken'],
+            "postBody": post_body,
+            "requestUri": request_uri,
+            "returnSecureToken": True
+        })
+
+        response = self.client._make_request(type='post', url=url, headers=headers, data=data)
+        self.client.user = response.json()
+        if self.client.verbose:
+            print(f"Provider {provider_id} linked.")
+
+    def unlink_provider(self, provider_ids: Any) -> None:
+        """
+        Unlink one or more providers from the current user.
+
+        :param provider_ids: Single providerId or iterable of providerIds to unlink.
+        """
+        if not self.client.user or not self.client.user.get('idToken'):
+            raise AuthException("No authenticated user.")
+
+        if isinstance(provider_ids, str):
+            provider_ids = [provider_ids]
+
+        url = f"{self.FIREBASE_REST_API}:update?key={self.client.config['apiKey']}"
+        headers = {"content-type": "application/json; charset=UTF-8"}
+        data = json.dumps({
+            "idToken": self.client.user['idToken'],
+            "deleteProvider": list(provider_ids),
+            "returnSecureToken": True
+        })
+
+        response = self.client._make_request(type='post', url=url, headers=headers, data=data)
+        self.client.user = response.json()
+        if self.client.verbose:
+            print(f"Providers {provider_ids} unlinked.")
 
     def get_refresh_token(self) -> Optional[str]:
         """Get the current user's refresh token for session persistence."""
@@ -275,6 +393,6 @@ class Auth:
         """
         refresh_token = session_data.get('refresh_token')
         if not refresh_token:
-            raise ValueError("No refresh_token in session data")
+            raise AuthException("No refresh_token in session data")
 
         self.restore_session(refresh_token)

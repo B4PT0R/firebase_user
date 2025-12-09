@@ -3,7 +3,7 @@
 import json
 from typing import TYPE_CHECKING, Dict, Any, Optional
 
-from .exceptions import FirebaseException
+from .exceptions import FirebaseException, FunctionsException
 
 if TYPE_CHECKING:
     from .client import FirebaseClient
@@ -35,7 +35,7 @@ class Functions:
         project_id = self.client.config.get('projectId')
 
         if not project_id:
-            raise ValueError("projectId not found in Firebase config")
+            raise FunctionsException("projectId not found in Firebase config")
 
         # Callable functions endpoint format
         url = f"https://{region}-{project_id}.cloudfunctions.net/{function_name}"
@@ -64,7 +64,7 @@ class Functions:
         if 'error' in result:
             error = result['error']
             error_msg = error.get('message', 'Unknown function error')
-            raise FirebaseException(f"Function error: {error_msg}")
+            raise FunctionsException(f"Function error: {error_msg}")
 
         # Return the result data
         return result.get('result')
