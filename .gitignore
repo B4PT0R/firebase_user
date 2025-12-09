@@ -2,7 +2,6 @@
 
 UserFiles/
 *app.config.json
-*test.py
 
 *geckodriver
 
