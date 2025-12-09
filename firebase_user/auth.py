@@ -284,7 +284,16 @@ class Auth:
         data = json.dumps(update_data)
 
         response = self.client._make_request(type='post', url=url, headers=headers, data=data)
-        self.client.user = response.json()
+        updated = response.json()
+
+        # Preserve technical session fields that may be missing from the update response
+        current = self.client.user or {}
+        self.client.user = {
+            **current,
+            **updated,
+            "email": current.get("email") or updated.get("email"),
+            "refreshToken": current.get("refreshToken") or updated.get("refreshToken"),
+        }
         if self.client.verbose:
             print("Profile updated successfully")
 

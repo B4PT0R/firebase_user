@@ -1,20 +1,18 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools==67.7.2", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "firebase_user"
-version = "0.3.0"
+version = "0.1.0"
 authors = [
     {name = "Baptiste Ferrand", email = "bferrand.maths@gmail.com"}
 ]
 description = "Client-side Firebase REST API interface designed for Streamlit applications - no admin credentials required."
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.9"
+license = {text = "MIT"}
 classifiers = [
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.7",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",

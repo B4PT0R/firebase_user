@@ -95,6 +95,8 @@ class Firestore:
     def __init__(self, client: 'FirebaseClient'):
         self.client = client
         self.base_url = f"https://firestore.googleapis.com/v1/projects/{self.client.config['projectId']}/databases/(default)/documents"
+        # Resource path without protocol, required by commit API payloads
+        self.resource_base = f"projects/{self.client.config['projectId']}/databases/(default)/documents"
 
     def get_user_data(self) -> Optional[Dict[str, Any]]:
         """Get the current user's document from the 'users' collection."""
@@ -377,7 +379,7 @@ class Firestore:
         """
         Build a Firestore write payload for set/update operations.
         """
-        doc_name = f"{self.base_url}/{collection}/{document}"
+        doc_name = f"{self.resource_base}/{collection}/{document}"
         write: Dict[str, Any] = {
             "update": {
                 "name": doc_name,
@@ -390,7 +392,7 @@ class Firestore:
 
     def build_delete_write(self, collection: str, document: str) -> Dict[str, Any]:
         """Build a Firestore write payload for deletions."""
-        doc_name = f"{self.base_url}/{collection}/{document}"
+        doc_name = f"{self.resource_base}/{collection}/{document}"
         return {"delete": doc_name}
 
     def commit(self, writes: List[Dict[str, Any]], transaction: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -447,7 +449,7 @@ class Firestore:
             else:
                 raise FirestoreException(f"Unsupported transform operation: {op}")
 
-        doc_name = f"{self.base_url}/{collection}/{document}"
+        doc_name = f"{self.resource_base}/{collection}/{document}"
         return {
             "transform": {
                 "document": doc_name,

@@ -127,9 +127,10 @@ class FirebaseClient:
 
         if response.status_code >= 400:
             try:
-                error = response.json().get('error', {})
-            except (ValueError, KeyError):
-                error = {}
+                parsed = response.json()
+            except ValueError:
+                parsed = None
+            error = parsed.get('error', {}) if isinstance(parsed, dict) else {}
 
             # Try refreshing token if unauthenticated
             if self.user is not None and self.user.get("idToken") and error.get('status') == 'UNAUTHENTICATED':
@@ -140,9 +141,10 @@ class FirebaseClient:
 
                 if response.status_code >= 400:
                     try:
-                        error = response.json().get('error', {})
-                    except (ValueError, KeyError):
-                        error = {}
+                        parsed = response.json()
+                    except ValueError:
+                        parsed = None
+                    error = parsed.get('error', {}) if isinstance(parsed, dict) else {}
 
                     if error.get('status') == 'NOT_FOUND':
                         if default:
@@ -159,7 +161,7 @@ class FirebaseClient:
                 else:
                     raise FirebaseException('NOT_FOUND')
             else:
-                msg = error.get('status') or error.get('message') or "Unknown Firebase error"
+                msg = error.get('status') or error.get('message') or (parsed if parsed is not None else "Unknown Firebase error")
                 raise FirebaseException(msg)
 
         return response
